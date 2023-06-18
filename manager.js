@@ -105,22 +105,25 @@ const podman = () => {
     },
     listWorkspaces(config) {
       const workspaces = this.getWorkspaces(config);
-      const sizes = workspaces.reduce((sizes, { user, workspace, volume }) => {
+      const sizes = workspaces.reduce((sizes, { user, workspace, image, volume }) => {
         return {
           workspace: Math.max(sizes.workspace, workspace.length),
           user: Math.max(sizes.user, user.length),
+          image: Math.max(sizes.image, image.tag.length),
           volume: Math.max(sizes.volume, volume.path.length),
         };
       }, {
         workspace: 'workspace'.length,
         user: 'user'.length,
+        image: 'image'.length,
         volume: 'volume'.length,
       });
       const columns = Object.keys(sizes);
-      const rows = workspaces.map(({ user, workspace, volume }) => {
+      const rows = workspaces.map(({ user, workspace, image, volume }) => {
         return [
           workspace.padEnd(sizes.workspace, ' '),
           user.padEnd(sizes.user, ' '),
+          image.tag.padEnd(sizes.image, ' '),
           volume.path.padEnd(sizes.volume, ' '),
         ];
       });
@@ -153,7 +156,25 @@ const podman = () => {
         .createWorkspaceVolume(config);
     },
     runWorkspace(config) {
-      runAttach(config);
+      const workspaces = this.getWorkspaces(config);
+      let workspace = workspaces.find(({ workspace, user }) => (
+        user === config.user &&
+        workspace === config.workspace
+      ));
+      if (!workspace && config.user === config.workspace) {
+        workspace = workspaces.find(({ workspace, user }) => (
+          user === config.user ||
+          workspace === config.workspace
+        ));
+      }
+
+      if (!workspace) {
+        process.stdout.write('Workspace not found\n');
+        process.exit(1);
+      }
+
+      this.ensureVolume(configure(workspace));
+      runAttach(configure(workspace));
       return this;
     },
     exists(resource, name) {
@@ -284,7 +305,7 @@ function runCommand(command, config = configure()) {
     case undefined: return podman().autoselect(config);
     case 'select': return podman().selectWorkspace(config);
     case 'list': return podman().listWorkspaces(config);
-    case 'run': return podman().ensureVolume(config).runWorkspace(config);
+    case 'run': return podman().runWorkspace(config);
     case 'build': return podman().buildWorkspaceImage(config).buildWorkspace(config);
     case 'remove': return podman().removeWorkspace(config);
     default: {
