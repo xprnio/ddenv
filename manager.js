@@ -5,6 +5,19 @@ const readline = require('node:readline').createInterface({
   input: process.stdin,
   output: process.stdout,
 });
+const question = (question, mapValue) => new Promise(resolve => {
+  const prompt = () => {
+    readline.question(question, (answer) => {
+      if (!answer) return prompt();
+      if (!mapValue) return resolve(answer);
+
+      const result = resolve(mapValue(answer));
+      if (result === false) return prompt();
+      resolve(result);
+    });
+  };
+  prompt();
+});
 
 const podman = () => {
   const run = (command, args = [], stdio = 'inherit') => {
@@ -41,66 +54,54 @@ const podman = () => {
   };
 
   return {
-    async selectWorkspace(config) {
-      const question = (question, mapValue) => new Promise(resolve => {
-        const prompt = () => {
-          readline.question(question, (answer) => {
-            if (!answer) return prompt();
-            if (!mapValue) return resolve(answer);
-
-            const result = resolve(mapValue(answer));
-            if (result === false) return prompt();
-            resolve(result);
-          });
-        };
-        prompt();
-      });
-
+    async autoselect(config) {
       const workspaces = this.getWorkspaces(config);
       if (workspaces.length === 0) {
-        process.stdout.write(`Let's create a new workspace for you.\n`);
-        const workspace = await question('Workspace name: ');
-        const user = await question('Workspace user: ');
-        const config = configure({ workspace, user });
-        runCommand('build', config);
-        return runCommand('run', config);
+        return this.interactiveSetup();
       }
-
       if (workspaces.length === 1) {
         const [workspace] = workspaces;
-        return runCommand('run', configure(workspace));
+        return this.runWorkspace(configure(workspace));
       }
+      return this.selectWorkspace(config);
+    },
+    async interactiveSetup() {
+      process.stdout.write(`Let's create a new workspace for you.\n`);
+      const workspace = await question('Workspace name: ');
+      const user = await question('Workspace user: ');
+      const config = configure({ workspace, user });
+      runCommand('build', config);
+      return runCommand('run', config);
+    },
+    async selectWorkspace(config) {
+      const workspaces = this.getWorkspaces(config);
 
-      const prompt = async () => {
-        const answers = workspaces.map(({ user, workspace }, i) => {
-          const index = i + 1;
-          process.stdout.write(`${index}: ${user} [${workspace}] \n`);
+      const answers = workspaces.map(({ user, workspace }, i) => {
+        const index = i + 1;
+        process.stdout.write(`${index}: ${user} [${workspace}] \n`);
 
-          return { index, user, workspace };
-        });
+        return { index, user, workspace };
+      });
+      const match = await question('Select a workspace: ', (value) => {
+        const index = Number.parseInt(value);
+        if (Number.isNaN(index)) {
+          process.stderr.write('Invalid workspace\n');
+          process.stdout.write('\n');
+          return false;
+        }
 
-        const workspace = await question('Select a workspace: ', (value) => {
-          const index = Number.parseInt(value.trim());
-          if (Number.isNaN(index)) {
-            process.stderr.write('Invalid workspace\n');
-            process.stdout.write('\n');
-            return false;
-          }
+        const match = answers.find(a => a.index === index);
+        if (!match) {
+          process.stderr.write('Invalid workspace\n');
+          process.stdout.write('\n');
+          return false;
+        }
 
-          const match = answers.find(a => a.index === index);
-          if (!match) {
-            process.stderr.write('Invalid workspace\n');
-            process.stdout.write('\n');
-            return false;
-          }
+        return match;
+      });
 
-          return match;
-        });
-
-        if (!workspace) return;
-        return runAttach(configure(match));
-      }
-      prompt();
+      if (!match) return;
+      return runAttach(configure(match));
     },
     listWorkspaces(config) {
       const workspaces = this.getWorkspaces(config);
@@ -280,7 +281,7 @@ function parseArgs(args) {
 
 function runCommand(command, config = configure()) {
   switch (command) {
-    case undefined:
+    case undefined: return podman().autoselect(config);
     case 'select': return podman().selectWorkspace(config);
     case 'list': return podman().listWorkspaces(config);
     case 'run': return podman().ensureVolume(config).runWorkspace(config);
