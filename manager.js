@@ -1,14 +1,18 @@
 const { lstatSync: lstat, mkdirSync: mkdir } = require('node:fs');
 const { spawnSync: spawn } = require('node:child_process');
 const configure = require('./config');
+const readline = require('node:readline').createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
 
-const podman = (config) => {
+const podman = () => {
   const run = (command, args = [], stdio = 'inherit') => {
     const child = spawn('podman', [command, ...args], { stdio });
     for (let i = 0; i < 1_000_000_000; i++);
     return child;
   };
-  const runBuild = () => run('build', [
+  const runBuild = (config) => run('build', [
     '--build-arg', `WORKSPACE_USER=${config.user}`,
     '--tag', config.image.tag,
     __dirname,
@@ -21,11 +25,11 @@ const podman = (config) => {
     '--volume', `${config.volume.name}:/home/${config.user}:z,bind`,
     config.image.tag,
   ]);
-  const runWorkspaceOwnership = () => run('unshare', [
+  const runWorkspaceOwnership = (config) => run('unshare', [
     'chown', '-R', '1000:1000',
     config.volume.path,
   ]);
-  const runCreateVolume = () => run('volume', [
+  const runCreateVolume = (config) => run('volume', [
     'create',
     '--opt', 'o=bind',
     '--opt', `device=${config.volume.path}`,
@@ -37,14 +41,37 @@ const podman = (config) => {
   };
 
   return {
-    selectWorkspace() {
-      const readline = require('node:readline').createInterface({
-        input: process.stdin,
-        output: process.stdout,
+    async selectWorkspace(config) {
+      const question = (question, mapValue) => new Promise(resolve => {
+        const prompt = () => {
+          readline.question(question, (answer) => {
+            if (!answer) return prompt();
+            if (!mapValue) return resolve(answer);
+
+            const result = resolve(mapValue(answer));
+            if (result === false) return prompt();
+            resolve(result);
+          });
+        };
+        prompt();
       });
 
-      const workspaces = this.getWorkspaces();
-      const prompt = () => {
+      const workspaces = this.getWorkspaces(config);
+      if (workspaces.length === 0) {
+        process.stdout.write(`Let's create a new workspace for you.\n`);
+        const workspace = await question('Workspace name: ');
+        const user = await question('Workspace user: ');
+        const config = configure({ workspace, user });
+        runCommand('build', config);
+        return runCommand('run', config);
+      }
+
+      if (workspaces.length === 1) {
+        const [workspace] = workspaces;
+        return runCommand('run', configure(workspace));
+      }
+
+      const prompt = async () => {
         const answers = workspaces.map(({ user, workspace }, i) => {
           const index = i + 1;
           process.stdout.write(`${index}: ${user} [${workspace}] \n`);
@@ -52,45 +79,47 @@ const podman = (config) => {
           return { index, user, workspace };
         });
 
-        readline.question('Select a workspace: ', (answer) => {
-          const index = Number.parseInt(answer.trim());
+        const workspace = await question('Select a workspace: ', (value) => {
+          const index = Number.parseInt(value.trim());
           if (Number.isNaN(index)) {
             process.stderr.write('Invalid workspace\n');
             process.stdout.write('\n');
-            return prompt();
+            return false;
           }
 
           const match = answers.find(a => a.index === index);
           if (!match) {
             process.stderr.write('Invalid workspace\n');
             process.stdout.write('\n');
-            return prompt();
+            return false;
           }
 
-          readline.close();
-          runAttach(configure(match));
+          return match;
         });
+
+        if (!workspace) return;
+        return runAttach(configure(match));
       }
       prompt();
     },
-    listWorkspaces() {
-      const workspaces = this.getWorkspaces();
+    listWorkspaces(config) {
+      const workspaces = this.getWorkspaces(config);
       const sizes = workspaces.reduce((sizes, { user, workspace, volume }) => {
         return {
-          user: Math.max(sizes.user, user.length),
           workspace: Math.max(sizes.workspace, workspace.length),
+          user: Math.max(sizes.user, user.length),
           volume: Math.max(sizes.volume, volume.path.length),
         };
       }, {
-        user: 'user'.length,
         workspace: 'workspace'.length,
+        user: 'user'.length,
         volume: 'volume'.length,
       });
       const columns = Object.keys(sizes);
       const rows = workspaces.map(({ user, workspace, volume }) => {
         return [
-          user.padEnd(sizes.user, ' '),
           workspace.padEnd(sizes.workspace, ' '),
+          user.padEnd(sizes.user, ' '),
           volume.path.padEnd(sizes.volume, ' '),
         ];
       });
@@ -108,34 +137,34 @@ const podman = (config) => {
       });
       return this;
     },
-    buildWorkspaceImage() {
-      runBuild();
+    buildWorkspaceImage(config) {
+      runBuild(config);
       return this;
     },
-    buildWorkspace() {
+    buildWorkspace(config) {
       return this
-        .createWorkspaceDirectory()
-        .createWorkspaceVolume();
+        .createWorkspaceDirectory(config)
+        .createWorkspaceVolume(config);
     },
-    ensureVolume() {
+    ensureVolume(config) {
       return this
-        .createWorkspaceDirectory()
-        .createWorkspaceVolume();
+        .createWorkspaceDirectory(config)
+        .createWorkspaceVolume(config);
     },
-    runWorkspace() {
+    runWorkspace(config) {
       runAttach(config);
       return this;
     },
     exists(resource, name) {
       return run(resource, ['exists', name]).status === 0;
     },
-    imageExists() {
+    imageExists(config) {
       return this.exists('image', config.image.tag);
     },
-    volumeExists() {
+    volumeExists(config) {
       return this.exists('volume', config.volume.name);
     },
-    volumePathExists() {
+    volumePathExists(config) {
       try {
         const stat = lstat(config.volume.path);
         if (!stat.isDirectory()) return false;
@@ -144,43 +173,43 @@ const podman = (config) => {
         return false;
       }
     },
-    createWorkspaceDirectory() {
-      if (this.volumePathExists()) return this;
-      if (this.volumeExists()) {
+    createWorkspaceDirectory(config) {
+      if (this.volumePathExists(config)) return this;
+      if (this.volumeExists(config)) {
         this
-          .removeVolume()
-          .createWorkspaceDirectory();
+          .removeVolume(config)
+          .createWorkspaceDirectory(config);
       }
 
       mkdirP(config.volume.path);
-      runWorkspaceOwnership()
+      runWorkspaceOwnership(config);
       return this;
     },
-    createWorkspaceVolume() {
-      if (this.volumeExists()) return this;
+    createWorkspaceVolume(config) {
+      if (this.volumeExists(config)) return this;
 
-      runCreateVolume();
+      runCreateVolume(config);
       return this;
     },
-    removeWorkspace() {
+    removeWorkspace(config) {
       return this
-        .removeImages()
-        .removeVolume();
+        .removeImages(config)
+        .removeVolume(config);
     },
-    removeImages() {
-      if (!this.imageExists()) return this;
+    removeImages(config) {
+      if (!this.imageExists(config)) return this;
 
       run('image', ['rm', config.image.tag]);
       return this;
     },
-    removeVolume() {
-      if (!this.volumeExists()) return this;
+    removeVolume(config) {
+      if (!this.volumeExists(config)) return this;
 
       run('volume', ['rm', config.volume.name]);
       return this;
     },
-    getWorkspaces() {
-      const containers = this.getContainers();
+    getWorkspaces(config) {
+      const containers = this.getContainers(config);
       return containers.reduce((workspaces, { tag }) => {
         const [workspace, user] = tag.split('-');
         if (!workspace || !user) return workspaces;
@@ -188,7 +217,7 @@ const podman = (config) => {
         return workspaces;
       }, []);
     },
-    getContainers() {
+    getContainers(config) {
       const result = run('image', ['list', '-af', `reference=${config.image_name}`], null).stdout.toString();
       const [columnLine, ...content] = result.split('\n').filter(Boolean);
       const columns = columnLine.split('').reduce((columns, char, charIndex) => {
@@ -245,23 +274,28 @@ const podman = (config) => {
 };
 
 function parseArgs(args) {
-  const [command, user, workspace = user] = args;
+  const [command, workspace, user = workspace] = args;
   return [command, { workspace, user }];
 }
 
-(async function(args) {
-  const [command, options] = parseArgs(args);
-  const config = configure(options);
-
+function runCommand(command, config = configure()) {
   switch (command) {
-    case 'list': return podman(config).listWorkspaces();
-    case 'select': return podman(config).selectWorkspace();
-    case 'run': return podman(config).ensureVolume().runWorkspace();
-    case 'build': return podman(config).buildWorkspaceImage().buildWorkspace();
-    case 'remove': return podman(config).removeWorkspace();
+    case undefined:
+    case 'select': return podman().selectWorkspace(config);
+    case 'list': return podman().listWorkspaces(config);
+    case 'run': return podman().ensureVolume(config).runWorkspace(config);
+    case 'build': return podman().buildWorkspaceImage(config).buildWorkspace(config);
+    case 'remove': return podman().removeWorkspace(config);
     default: {
       console.error('Invalid command:', command);
       process.exit(1);
     }
   }
+}
+
+(async function(args) {
+  const [command, options] = parseArgs(args);
+  const config = configure(options);
+  await runCommand(command, config);
+  readline.close();
 })(process.argv.slice(2));
