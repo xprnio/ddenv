@@ -1,0 +1,9 @@
+theme = "catppuccin_mocha"
+
+[editor]
+true-color = true
+line-number = "relative"
+bufferline = "always"
+
+[editor.file-picker]
+hidden = false

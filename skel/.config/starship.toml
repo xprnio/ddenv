@@ -1,0 +1,28 @@
+format = '''
+$user$directory$package
+(bold blue) [>](bold green) '''
+
+[container]
+disabled = true
+
+[username]
+style_user = 'white bold'
+style_root = 'red bold'
+format = '[\[$user\]]($style) '
+show_always = true
+
+[battery]
+full_symbol = "• "
+charging_symbol = "⇡ "
+discharging_symbol = "⇣ "
+unknown_symbol = "❓ "
+empty_symbol = "❗ "
+
+[erlang]
+symbol = "ⓔ "
+
+[nodejs]
+symbol = "[⬢](bold green) "
+
+[pulumi]
+symbol = "🧊 "

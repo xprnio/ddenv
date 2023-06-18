@@ -1,0 +1,41 @@
+[[language]]
+name = "javascript"
+injection-regex = "^(js|javascript)$"
+file-types = ["js", "jsx", "mjs"]
+shebangs = ["node"]
+roots = ["package.json", "tsconfig.json"]
+comment-token = "//"
+indent = { tab-width = 2, unit = "  " }
+auto-format = true
+
+[[language]]
+name = "jsx"
+scope = "source.jsx"
+injection-regex = "jsx"
+file-types = ["jsx"]
+shebangs = ["node"]
+roots = ["package.json", "tsconfig.json"]
+comment-token = "//"
+grammar = "javascript"
+indent = { tab-width = 2, unit = "  " }
+auto-format = true
+
+[[language]]
+name = "typescript"
+scope = "source.ts"
+injection-regex = "^(ts|typescript)$"
+file-types = ["ts"]
+shebangs = ["node"]
+roots = ["package.json", "tsconfig.json"]
+indent = { tab-width = 2, unit = "  " }
+auto-format = true
+
+[[language]]
+name = "tsx"
+scope = "source.tsx"
+injection-regex = "^(tsx)$" # |typescript
+file-types = ["tsx"]
+shebangs = ["node"]
+roots = ["package.json", "tsconfig.json"]
+indent = { tab-width = 2, unit = "  " }
+auto-format = true
