@@ -10,6 +10,10 @@ This is to that workspaces could be built using completely different software st
 When starting up the container, a directory named `workspaces` is made inside the project path.
 A volume will be created for this workspace inside of that directory which will be bound to the container's home directory.
 
+### Dependencies
+The only dependency for this is `podman` and `node`.
+The application itself does not have any dependencies aside from `node` itself.
+
 ### Commands
 The following commands are supported:
 ```sh
